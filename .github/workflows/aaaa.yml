@@ -37,7 +37,7 @@ jobs:
           pip install baostock
           pip install pandas
           pip install numpy
-          pip install talib
+          pip install ta-lib
 
       # 5. 运行 Python 脚本
       - name: Run stock screening script
