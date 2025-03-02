@@ -1,7 +1,6 @@
 import baostock as bs
 import pandas as pd
 import numpy as np
-import talib
 import logging
 from datetime import datetime, timedelta
 
@@ -92,13 +91,39 @@ class TrendIndicatorA:
         trend = 100 * (ma_close - ma_open) / (ha_high - ha_low)
         return trend.replace([np.inf, -np.inf], np.nan).fillna(0)
 
+    def _calculate_rsi(self, prices, period):
+        """手动实现 RSI"""
+        delta = np.diff(prices)
+        gain = np.where(delta > 0, delta, 0)
+        loss = np.where(delta < 0, -delta, 0)
+
+        # 初始化第一个平均值
+        avg_gain = np.mean(gain[1:period + 1])
+        avg_loss = np.mean(loss[1:period + 1])
+
+        rsi = [np.nan] * period  # 前 period 个值为 NaN
+        rsi.append(100 - (100 / (1 + avg_gain / avg_loss)) if avg_loss != 0 else 100)
+
+        # 逐日计算后续 RSI
+        for i in range(period + 1, len(prices)):
+            avg_gain = (avg_gain * (period - 1) + gain[i]) / period
+            avg_loss = (avg_loss * (period - 1) + loss[i]) / period
+            rsi.append(100 - (100 / (1 + avg_gain / avg_loss)) if avg_loss != 0 else 100)
+
+        return np.array(rsi)
+
+    def _calculate_ema(self, data, period):
+        """手动实现 EMA"""
+        return pd.Series(data).ewm(span=period, adjust=False).mean().values
+
     def _calculate_qqe(self, prices, rsi_length, smoothing_factor, qqe_factor):
-        rsi = talib.RSI(prices, timeperiod=rsi_length)
-        smoothed_rsi = talib.EMA(rsi, timeperiod=smoothing_factor)
+        """手动实现 QQE"""
+        rsi = self._calculate_rsi(prices, rsi_length)
+        smoothed_rsi = self._calculate_ema(rsi, smoothing_factor)
         atr_rsi = np.abs(np.diff(smoothed_rsi))
         atr_rsi = np.concatenate([[np.nan], atr_rsi])
         wilders_length = rsi_length * 2 - 1
-        smoothed_atr_rsi = talib.EMA(atr_rsi, timeperiod=wilders_length)
+        smoothed_atr_rsi = self._calculate_ema(atr_rsi, wilders_length)
         dynamic_atr_rsi = smoothed_atr_rsi * qqe_factor
 
         long_band = np.zeros_like(smoothed_rsi)
@@ -126,7 +151,8 @@ class TrendIndicatorA:
             else:
                 trend_direction[i] = trend_direction[i-1]
 
-        return np.where(trend_direction == 1, long_band, short_band), smoothed_rsi
+        qqe_trend_line = np.where(trend_direction == 1, long_band, short_band)
+        return qqe_trend_line, smoothed_rsi
 
     def _calculate_qqe_mod(self):
         rsi_length_primary = 6
@@ -253,7 +279,7 @@ class TrendIndicatorA:
             return None
         
         trading_days = self.data.index
-        recent_days = trading_days[-days:]  # 取最近days个交易日
+        recent_days = trading_days[-days:]
         
         current_color = None
         previous_color = None
@@ -266,9 +292,8 @@ class TrendIndicatorA:
             if time_point in recent_days:
                 try:
                     qqe_color = self.qqe_colors.loc[time_point]
-                    # 检查买入信号：趋势从红到绿且QQE为蓝色
                     if previous_color == 'red' and current_color == 'green' and qqe_color == '#00c3ff':
-                        return time_point  # 返回买入信号的具体日期
+                        return time_point
                 except KeyError:
                     continue
 
@@ -279,7 +304,7 @@ class TrendIndicatorA:
                     trend_confirmation_dates = [time_point]
             previous_color = current_color
 
-        return None  # 无买入信号
+        return None
 
     def logout_baostock(self):
         bs.logout()
@@ -290,7 +315,7 @@ def get_all_stocks(date="2025-02-28"):
     stock_list = []
     while (rs.error_code == "0") & rs.next():
         stock_info = rs.get_row_data()
-        stock_code = stock_info[0]  # 第一列为股票代码
+        stock_code = stock_info[0]
         if stock_code.startswith("sh.") or stock_code.startswith("sz."):
             stock_list.append(stock_code)
     return stock_list
@@ -301,7 +326,7 @@ def screen_stocks_for_buy_signals(start_date="2025-02-01", end_date="2025-02-28"
     stock_list = get_all_stocks(date=end_date)
     buy_signals = []
 
-    for stock_code in stock_list[:100]:  # 限制为前100只股票以加快测试，可根据需要调整
+    for stock_code in stock_list[:100]:
         try:
             logging.info(f"Processing stock: {stock_code}")
             indicator = TrendIndicatorA(
@@ -326,11 +351,10 @@ def screen_stocks_for_buy_signals(start_date="2025-02-01", end_date="2025-02-28"
 if __name__ == "__main__":
     try:
         logging.info("Starting stock screening")
-        # 设置筛选时间范围和最近3天的检查
         buy_signals = screen_stocks_for_buy_signals(
-            start_date="2024-06-01",  # 数据开始日期
-            end_date="2025-02-28",    # 数据结束日期（当前日期）
-            days=3                    # 检查最近3个交易日
+            start_date="2024-06-01",
+            end_date="2025-02-28",
+            days=3
         )
 
         print("\nStocks with Buy Signals in Last 3 Trading Days:")
