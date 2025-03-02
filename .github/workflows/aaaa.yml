@@ -29,12 +29,12 @@ jobs:
       # 4. 运行 Python 脚本
       - name: Run stock screening script
         run: |
-          python check.py  # 替换为你的脚本文件名，例如 screen_stocks.py
+          python main.py  # 替换为你的脚本文件名，例如 screen_stocks.py
 
       # 5. （可选）提交结果到仓库
       - name: Commit and push results
         run: |
-          git config --local user.email "action@github.com"
+          git config --local user.email "baoliang@github.com"
           git config --local user.name "GitHub Action"
           git add .
           git diff --quiet && git diff --staged --quiet || git commit -m "Update buy signal results"
