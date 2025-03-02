@@ -22,17 +22,13 @@ jobs:
 
       # 3. 安装 TA-Lib 系统依赖
       - name: Install TA-Lib
-        run: |
-          sudo apt-get install libta-lib0-dev
+        uses: TA-Lib/ta-lib@v0.4.0  # 使用预构建的 TA-Lib 动作
 
       # 4. 安装 Python 依赖
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install baostock
-          pip install pandas
-          pip install numpy
-          pip install ta-lib
+          pip install -r requirements.txt
 
       # 5. 运行 Python 脚本
       - name: Run stock screening script
