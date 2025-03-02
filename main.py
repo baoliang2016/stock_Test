@@ -290,22 +290,31 @@ class TrendIndicatorA:
 
         return None
 
-def get_all_stocks():
-    """预定义部分中国A股股票代码（Yahoo Finance 不提供直接获取所有股票的 API）"""
-    # 这里仅列出部分示例股票代码，可根据需要扩展
-    stock_list = [
-        "000001.SZ",  # 平安银行
-        "000002.SZ",  # 万科A
-        "600000.SS",  # 浦发银行
-        "600519.SS",  # 贵州茅台
-        "601318.SS",  # 中国平安
-    ]
-    return stock_list
+def get_all_stocks(filename="a_stock_codes.csv"):
+    """从文件中读取股票代码"""
+    try:
+        df = pd.read_csv(filename)
+        # 假设 CSV 文件包含 'code' 列，调整为 Yahoo Finance 格式（sh. -> .SS, sz. -> .SZ）
+        stock_list = df['code'].apply(lambda x: x.replace('sh.', '') + '.SS' if x.startswith('sh.') else x.replace('sz.', '') + '.SZ').tolist()
+        logging.info(f"Loaded {len(stock_list)} stock codes from {filename}")
+        return stock_list
+    except FileNotFoundError:
+        logging.error(f"Stock code file {filename} not found")
+        print(f"Error: Stock code file {filename} not found. Please generate it first.")
+        return []
+    except Exception as e:
+        logging.error(f"Error reading stock codes from {filename}: {str(e)}")
+        print(f"Error reading stock codes: {e}")
+        return []
 
-def screen_stocks_for_buy_signals(start_date="2024-06-01", end_date="2025-02-28", days=3):
+def screen_stocks_for_buy_signals(start_date="2024-06-01", end_date="2025-02-28", days=3, stock_file="a_stock_codes.csv"):
     """筛选股票并检查最近days天内的买入信号"""
-    stock_list = get_all_stocks()
+    stock_list = get_all_stocks(stock_file)
     buy_signals = []
+
+    if not stock_list:
+        logging.error("No stock codes available to process")
+        return buy_signals
 
     for stock_code in stock_list[:100]:  # 限制为前100只股票，可根据需要调整
         try:
@@ -333,7 +342,8 @@ if __name__ == "__main__":
         buy_signals = screen_stocks_for_buy_signals(
             start_date="2024-06-01",
             end_date="2025-02-28",
-            days=3
+            days=3,
+            stock_file="a_stock_codes.csv"  # 指定股票代码文件
         )
 
         print("\nStocks with Buy Signals in Last 3 Trading Days:")
