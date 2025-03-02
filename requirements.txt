@@ -1,4 +1,4 @@
 baostock
 pandas
 numpy
-ta-lib
+https://github.com/timkpaine/ta-lib-python/releases/download/v0.6.0/ta_lib-0.6.0-cp310-cp310-linux_x86_64.whl
