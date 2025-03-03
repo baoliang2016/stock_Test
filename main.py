@@ -1,3 +1,4 @@
+#调试完成，并且能够通过yf数据库批量检测有买入信号的股票信息。
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -48,7 +49,6 @@ class TrendIndicatorA:
             logging.warning(f"No stock data retrieved for {self.stock_code}")
             return None
 
-        # 调整列名以匹配原有代码
         data = data.rename(columns={
             "Open": "open",
             "High": "high",
@@ -56,7 +56,7 @@ class TrendIndicatorA:
             "Close": "close",
             "Volume": "volume"
         })
-        data.index = pd.to_datetime(data.index).tz_localize(None)  # 移除时区信息
+        data.index = pd.to_datetime(data.index).tz_localize(None)
         data["code"] = self.stock_code
         return data[["code", "open", "high", "low", "close", "volume"]]
 
@@ -79,23 +79,27 @@ class TrendIndicatorA:
         return trend.replace([np.inf, -np.inf], np.nan).fillna(0)
 
     def _calculate_rsi(self, prices, period):
-        """手动实现 RSI"""
+        """手动实现 RSI，修复索引越界问题"""
         delta = np.diff(prices)
-        gain = np.where(delta > 0, delta, 0)
-        loss = np.where(delta < 0, -delta, 0)
+        gain = np.zeros_like(prices)
+        loss = np.zeros_like(prices)
+        gain[1:] = np.where(delta > 0, delta, 0)
+        loss[1:] = np.where(delta < 0, -delta, 0)
 
+        rsi = np.full_like(prices, np.nan)
         avg_gain = np.mean(gain[1:period + 1])
         avg_loss = np.mean(loss[1:period + 1])
-
-        rsi = [np.nan] * period
-        rsi.append(100 - (100 / (1 + avg_gain / avg_loss)) if avg_loss != 0 else 100)
+        if avg_loss != 0:
+            rsi[period] = 100 - (100 / (1 + avg_gain / avg_loss))
+        else:
+            rsi[period] = 100
 
         for i in range(period + 1, len(prices)):
             avg_gain = (avg_gain * (period - 1) + gain[i]) / period
             avg_loss = (avg_loss * (period - 1) + loss[i]) / period
-            rsi.append(100 - (100 / (1 + avg_gain / avg_loss)) if avg_loss != 0 else 100)
+            rsi[i] = 100 - (100 / (1 + avg_gain / avg_loss)) if avg_loss != 0 else 100
 
-        return np.array(rsi)
+        return rsi
 
     def _calculate_ema(self, data, period):
         """手动实现 EMA"""
@@ -294,7 +298,6 @@ def get_all_stocks(filename="a_stock_codes.csv"):
     """从文件中读取股票代码"""
     try:
         df = pd.read_csv(filename)
-        # 假设 CSV 文件包含 'code' 列，调整为 Yahoo Finance 格式（sh. -> .SS, sz. -> .SZ）
         stock_list = df['code'].apply(lambda x: x.replace('sh.', '') + '.SS' if x.startswith('sh.') else x.replace('sz.', '') + '.SZ').tolist()
         logging.info(f"Loaded {len(stock_list)} stock codes from {filename}")
         return stock_list
@@ -316,7 +319,7 @@ def screen_stocks_for_buy_signals(start_date="2024-06-01", end_date="2025-02-28"
         logging.error("No stock codes available to process")
         return buy_signals
 
-    for stock_code in stock_list[:100]:  # 限制为前100只股票，可根据需要调整
+    for stock_code in stock_list[:5000]:
         try:
             logging.info(f"Processing stock: {stock_code}")
             indicator = TrendIndicatorA(
@@ -343,7 +346,7 @@ if __name__ == "__main__":
             start_date="2024-06-01",
             end_date="2025-02-28",
             days=3,
-            stock_file="a_stock_codes.csv"  # 指定股票代码文件
+            stock_file="a_stock_codes.csv"
         )
 
         print("\nStocks with Buy Signals in Last 3 Trading Days:")
