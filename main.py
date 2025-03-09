@@ -1,4 +1,3 @@
-#调试完成，并且能够通过yf数据库批量检测有买入信号的股票信息。
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -262,13 +261,24 @@ class TrendIndicatorA:
             self.transactions.append({'time': time_point, 'action': 'sell', 'price': sell_price, 'quantity': quantity, 'proceeds': proceeds})
 
     def check_recent_buy_signal(self, days=3):
-        """检查最近days个交易日内是否有买入信号"""
+        """检查最近days个交易日内是否有买入信号，并确保当前不是亏损状态"""
         if self.data is None or len(self.data) < 2:
             return None
         
         trading_days = self.data.index
         recent_days = trading_days[-days:]
         
+        # 先完整计算交易历史以确定当前持仓状态
+        self.check_trend_changes()
+        
+        # 检查当前是否持有头寸且处于亏损状态
+        if self.position > 0 and self.transactions:
+            last_buy_price = next((t['price'] for t in reversed(self.transactions) if t['action'] == 'buy'), None)
+            current_price = self.data['close'].iloc[-1]
+            if last_buy_price and current_price < last_buy_price * (1 - self.transaction_fee_rate):
+                logging.info(f"Stock {self.stock_code} is currently in loss position")
+                return None  # 当前持仓亏损，直接返回 None
+
         current_color = None
         previous_color = None
         trend_confirmation_dates = []
@@ -311,7 +321,7 @@ def get_all_stocks(filename="a_stock_codes.csv"):
         return []
 
 def screen_stocks_for_buy_signals(start_date="2024-06-01", end_date="2025-02-28", days=3, stock_file="a_stock_codes.csv"):
-    """筛选股票并检查最近days天内的买入信号"""
+    """筛选股票并检查最近days天内的买入信号，排除当前亏损的股票"""
     stock_list = get_all_stocks(stock_file)
     buy_signals = []
 
@@ -331,6 +341,14 @@ def screen_stocks_for_buy_signals(start_date="2024-06-01", end_date="2025-02-28"
             )
             buy_signal_date = indicator.check_recent_buy_signal(days=days)
             if buy_signal_date:
+                # 再次确认当前价格不低于最近一次买入价格（如果有持仓）
+                if indicator.position > 0:
+                    last_buy_price = next((t['price'] for t in reversed(indicator.transactions) if t['action'] == 'buy'), None)
+                    current_price = indicator.data['close'].iloc[-1]
+                    if last_buy_price and current_price < last_buy_price * (1 - indicator.transaction_fee_rate):
+                        logging.info(f"Skipping {stock_code} due to current loss position")
+                        continue
+                
                 buy_signals.append({"stock_code": stock_code, "buy_signal_date": buy_signal_date})
                 print(f"Stock {stock_code} has a buy signal on {buy_signal_date}")
         except Exception as e:
@@ -344,12 +362,12 @@ if __name__ == "__main__":
         logging.info("Starting stock screening")
         buy_signals = screen_stocks_for_buy_signals(
             start_date="2024-06-01",
-            end_date="2025-02-28",
+            end_date="2025-03-20",
             days=3,
             stock_file="a_stock_codes.csv"
         )
 
-        print("\nStocks with Buy Signals in Last 3 Trading Days:")
+        print("\nStocks with Buy Signals in Last 3 Trading Days (Excluding Current Losses):")
         for signal in buy_signals:
             print(f"Stock: {signal['stock_code']}, Buy Signal Date: {signal['buy_signal_date']}")
 
