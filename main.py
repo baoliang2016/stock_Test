@@ -370,7 +370,8 @@ if __name__ == "__main__":
 
         print("\nStocks with Buy Signals in Last 3 Trading Days (Excluding Current Losses):")
         for signal in buy_signals:
-            signal_date = signal['buy_signal_date'].split(" ")[0]
+            #signal_date = signal['buy_signal_date'].split(" ")[0]
+            signal_date = signal['buy_signal_date'].strftime("%Y-%m-%d")
             if signal_date == current_date:
                 print(f"Stock: {signal['stock_code']}, Buy Signal Date: {signal['buy_signal_date']}")
 
