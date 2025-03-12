@@ -360,6 +360,7 @@ def screen_stocks_for_buy_signals(start_date="2024-06-01", end_date="2025-02-28"
 if __name__ == "__main__":
     try:
         logging.info("Starting stock screening")
+        current_date = datetime.now().strftime("%Y-%m-%d")
         buy_signals = screen_stocks_for_buy_signals(
             start_date="2024-06-01",
             end_date="2025-03-20",
@@ -369,7 +370,9 @@ if __name__ == "__main__":
 
         print("\nStocks with Buy Signals in Last 3 Trading Days (Excluding Current Losses):")
         for signal in buy_signals:
-            print(f"Stock: {signal['stock_code']}, Buy Signal Date: {signal['buy_signal_date']}")
+            signal_date = signal['buy_signal_date'].split(" ")[0]
+            if signal_date == current_date:
+                print(f"Stock: {signal['stock_code']}, Buy Signal Date: {signal['buy_signal_date']}")
 
     except Exception as e:
         logging.error(f"Main execution error: {str(e)}", exc_info=True)
