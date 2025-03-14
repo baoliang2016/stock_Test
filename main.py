@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import logging
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Configure logging
 logging.basicConfig(
@@ -320,8 +321,34 @@ def get_all_stocks(filename="a_stock_codes.csv"):
         print(f"Error reading stock codes: {e}")
         return []
 
-def screen_stocks_for_buy_signals(start_date="2024-06-01", end_date="2025-02-28", days=3, stock_file="a_stock_codes.csv"):
-    """筛选股票并检查最近days天内的买入信号，排除当前亏损的股票"""
+def process_stock(stock_code, start_date, end_date, days):
+    """处理单个股票并返回买入信号结果"""
+    try:
+        logging.info(f"Processing stock: {stock_code}")
+        indicator = TrendIndicatorA(
+            stock_code=stock_code,
+            start_date=start_date,
+            end_date=end_date,
+            trend_threshold=10,
+            require_qqe_red_on_sell=True
+        )
+        buy_signal_date = indicator.check_recent_buy_signal(days=days)
+        if buy_signal_date:
+            # 再次确认当前价格不低于最近一次买入价格（如果有持仓）
+            if indicator.position > 0:
+                last_buy_price = next((t['price'] for t in reversed(indicator.transactions) if t['action'] == 'buy'), None)
+                current_price = indicator.data['close'].iloc[-1]
+                if last_buy_price and current_price < last_buy_price * (1 - indicator.transaction_fee_rate):
+                    logging.info(f"Skipping {stock_code} due to current loss position")
+                    return None
+            return {"stock_code": stock_code, "buy_signal_date": buy_signal_date}
+        return None
+    except Exception as e:
+        logging.error(f"Error processing {stock_code}: {str(e)}")
+        return None
+
+def screen_stocks_for_buy_signals(start_date="2024-06-01", end_date="2025-02-28", days=3, stock_file="a_stock_codes.csv", max_workers=10):
+    """使用多线程筛选股票并检查最近days天内的买入信号，排除当前亏损的股票"""
     stock_list = get_all_stocks(stock_file)
     buy_signals = []
 
@@ -329,48 +356,39 @@ def screen_stocks_for_buy_signals(start_date="2024-06-01", end_date="2025-02-28"
         logging.error("No stock codes available to process")
         return buy_signals
 
-    for stock_code in stock_list[:5000]:
-        try:
-            logging.info(f"Processing stock: {stock_code}")
-            indicator = TrendIndicatorA(
-                stock_code=stock_code,
-                start_date=start_date,
-                end_date=end_date,
-                trend_threshold=10,
-                require_qqe_red_on_sell=True
-            )
-            buy_signal_date = indicator.check_recent_buy_signal(days=days)
-            if buy_signal_date:
-                # 再次确认当前价格不低于最近一次买入价格（如果有持仓）
-                if indicator.position > 0:
-                    last_buy_price = next((t['price'] for t in reversed(indicator.transactions) if t['action'] == 'buy'), None)
-                    current_price = indicator.data['close'].iloc[-1]
-                    if last_buy_price and current_price < last_buy_price * (1 - indicator.transaction_fee_rate):
-                        logging.info(f"Skipping {stock_code} due to current loss position")
-                        continue
-                
-                buy_signals.append({"stock_code": stock_code, "buy_signal_date": buy_signal_date})
-                print(f"Stock {stock_code} has a buy signal on {buy_signal_date}")
-        except Exception as e:
-            logging.error(f"Error processing {stock_code}: {str(e)}")
-            continue
+    # 使用 ThreadPoolExecutor 进行多线程处理
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # 提交所有任务
+        future_to_stock = {executor.submit(process_stock, stock_code, start_date, end_date, days): stock_code 
+                           for stock_code in stock_list[:5000]}
+        
+        # 收集结果
+        for future in as_completed(future_to_stock):
+            stock_code = future_to_stock[future]
+            try:
+                result = future.result()
+                if result:
+                    buy_signals.append(result)
+                    print(f"Stock {result['stock_code']} has a buy signal on {result['buy_signal_date']}")
+            except Exception as e:
+                logging.error(f"Error retrieving result for {stock_code}: {str(e)}")
 
     return buy_signals
 
 if __name__ == "__main__":
     try:
-        logging.info("Starting stock screening")
+        logging.info("Starting stock screening with multithreading")
         current_date = datetime.now().strftime("%Y-%m-%d")
         buy_signals = screen_stocks_for_buy_signals(
             start_date="2024-06-01",
             end_date="2025-03-20",
             days=3,
-            stock_file="a_stock_codes.csv"
+            stock_file="a_stock_codes.csv",
+            max_workers=10  # 可根据系统性能调整线程数
         )
 
         print("\nStocks with Buy Signals in Last 3 Trading Days (Excluding Current Losses):")
         for signal in buy_signals:
-            #signal_date = signal['buy_signal_date'].split(" ")[0]
             signal_date = signal['buy_signal_date'].strftime("%Y-%m-%d")
             if signal_date == current_date:
                 print(f"Stock: {signal['stock_code']}, Buy Signal Date: {signal['buy_signal_date']}")
