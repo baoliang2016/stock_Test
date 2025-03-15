@@ -4,6 +4,8 @@ import numpy as np
 import logging
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+from requests.exceptions import HTTPError
 
 # Configure logging
 logging.basicConfig(
@@ -40,25 +42,39 @@ class TrendIndicatorA:
             self.trend = self._calculate_trend()
             self.qqe_colors = self._calculate_qqe_mod()
 
-    def _get_stock_data(self):
-        """使用 yfinance 获取股票数据"""
-        ticker = yf.Ticker(self.stock_code)
-        data = ticker.history(start=self.start_date, end=self.end_date, interval="1d")
-        
-        if data.empty:
-            logging.warning(f"No stock data retrieved for {self.stock_code}")
-            return None
+    def _get_stock_data(self, max_retries=3):
+        """使用 yfinance 获取股票数据，带重试机制"""
+        for attempt in range(max_retries):
+            try:
+                ticker = yf.Ticker(self.stock_code)
+                data = ticker.history(start=self.start_date, end=self.end_date, interval="1d")
+                
+                if data.empty:
+                    logging.warning(f"No stock data retrieved for {self.stock_code}")
+                    return None
 
-        data = data.rename(columns={
-            "Open": "open",
-            "High": "high",
-            "Low": "low",
-            "Close": "close",
-            "Volume": "volume"
-        })
-        data.index = pd.to_datetime(data.index).tz_localize(None)
-        data["code"] = self.stock_code
-        return data[["code", "open", "high", "low", "close", "volume"]]
+                data = data.rename(columns={
+                    "Open": "open",
+                    "High": "high",
+                    "Low": "low",
+                    "Close": "close",
+                    "Volume": "volume"
+                })
+                data.index = pd.to_datetime(data.index).tz_localize(None)
+                data["code"] = self.stock_code
+                return data[["code", "open", "high", "low", "close", "volume"]]
+            
+            except HTTPError as e:
+                if "Too Many Requests" in str(e) and attempt < max_retries - 1:
+                    sleep_time = 2 ** attempt  # 指数退避：1秒、2秒、4秒
+                    logging.warning(f"Rate limited for {self.stock_code}, retrying in {sleep_time} seconds...")
+                    time.sleep(sleep_time)
+                    continue
+                logging.error(f"Failed to fetch data for {self.stock_code} after {max_retries} attempts: {e}")
+                return None
+            except Exception as e:
+                logging.error(f"Unexpected error fetching data for {self.stock_code}: {e}")
+                return None
 
     def _calculate_heikin_ashi(self):
         ha_close = (self.data["open"] + self.data["high"] + self.data["low"] + self.data["close"]) / 4
@@ -347,31 +363,31 @@ def process_stock(stock_code, start_date, end_date, days):
         logging.error(f"Error processing {stock_code}: {str(e)}")
         return None
 
-def screen_stocks_for_buy_signals(start_date="2024-06-01", end_date="2025-02-28", days=3, stock_file="a_stock_codes.csv", max_workers=10):
+def screen_stocks_for_buy_signals(start_date="2024-06-01", end_date=None, days=3, stock_file="a_stock_codes.csv", max_workers=5, batch_size=100):
     """使用多线程筛选股票并检查最近days天内的买入信号，排除当前亏损的股票"""
     stock_list = get_all_stocks(stock_file)
     buy_signals = []
+    end_date = end_date or datetime.now().strftime("%Y-%m-%d")
 
     if not stock_list:
         logging.error("No stock codes available to process")
         return buy_signals
 
-    # 使用 ThreadPoolExecutor 进行多线程处理
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # 提交所有任务
-        future_to_stock = {executor.submit(process_stock, stock_code, start_date, end_date, days): stock_code 
-                           for stock_code in stock_list[:5000]}
-        
-        # 收集结果
-        for future in as_completed(future_to_stock):
-            stock_code = future_to_stock[future]
-            try:
-                result = future.result()
-                if result:
-                    buy_signals.append(result)
-                    print(f"Stock {result['stock_code']} has a buy signal on {result['buy_signal_date']}")
-            except Exception as e:
-                logging.error(f"Error retrieving result for {stock_code}: {str(e)}")
+    for i in range(0, len(stock_list), batch_size):
+        batch = stock_list[i:i + batch_size]
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_stock = {executor.submit(process_stock, stock_code, start_date, end_date, days): stock_code 
+                               for stock_code in batch}
+            for future in as_completed(future_to_stock):
+                stock_code = future_to_stock[future]
+                try:
+                    result = future.result()
+                    if result:
+                        buy_signals.append(result)
+                        print(f"Stock {result['stock_code']} has a buy signal on {result['buy_signal_date']}")
+                except Exception as e:
+                    logging.error(f"Error retrieving result for {stock_code}: {str(e)}")
+        time.sleep(5)  # 每批次间等待 5 秒
 
     return buy_signals
 
@@ -380,11 +396,12 @@ if __name__ == "__main__":
         logging.info("Starting stock screening with multithreading")
         current_date = datetime.now().strftime("%Y-%m-%d")
         buy_signals = screen_stocks_for_buy_signals(
-            start_date="2024-06-01",
-            end_date="2025-03-20",
+            start_date="2024-08-01",
+            end_date=current_date,
             days=3,
             stock_file="a_stock_codes.csv",
-            max_workers=10  # 可根据系统性能调整线程数
+            max_workers=5,
+            batch_size=100
         )
 
         print("\nStocks with Buy Signals in Last 3 Trading Days (Excluding Current Losses):")
